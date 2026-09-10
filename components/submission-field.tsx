@@ -6,10 +6,13 @@ import {
   ArrowUp,
   Camera,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ImagePlus,
   Keyboard,
   LoaderCircle,
   ScanText,
+  Undo2,
   Trash2,
   X,
 } from 'lucide-react';
@@ -70,6 +73,13 @@ export default function SubmissionField({
   const [checked, setChecked] = useState(false);
   const [append, setAppend] = useState(true);
   const [notice, setNotice] = useState('');
+  const [reviewSource, setReviewSource] = useState<'ai' | 'manual'>('ai');
+  const [activePhotoId, setActivePhotoId] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [lastImport, setLastImport] = useState<{
+    before: string;
+    after: string;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +87,12 @@ export default function SubmissionField({
   const mounted = useRef(true);
   const operation = useRef(false);
   const locked = disabled || working;
+  const activePhotoIndex = Math.max(
+    0,
+    photos.findIndex((photo) => photo.id === activePhotoId),
+  );
+  const activePhoto = photos[activePhotoIndex];
+  const unclearCount = (draft.match(/\[unclear\]/gi) || []).length;
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -92,8 +108,13 @@ export default function SubmissionField({
     [target, onPhotoState],
   );
   useEffect(() => {
-    if (result) reviewRef.current?.focus();
-  }, [result]);
+    if (result) {
+      reviewRef.current?.focus({ preventScroll: true });
+      document
+        .getElementById(`${target}-photo-review`)
+        ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  }, [result, target]);
   const invalidate = () => {
     setResult(null);
     setDraft('');
@@ -101,7 +122,7 @@ export default function SubmissionField({
     setPhotoError('');
     setNotice('');
   };
-  const addPhotos = async (files: FileList | null) => {
+  const addPhotos = async (files: FileList | readonly File[] | null) => {
     if (!files?.length || locked || operation.current) return;
     const selected = Array.from(files);
     if (photos.length + selected.length > MAX_PHOTOS) {
@@ -161,16 +182,28 @@ export default function SubmissionField({
         body: JSON.stringify({ target, images: photos.map((p) => p.dataUrl) }),
         signal: controller.signal,
       });
-      const data = (await response.json()) as unknown;
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(
+          'Photo reading returned an incomplete response. Your photos are kept here; try again or type from the photos.',
+        );
+      }
       if (!response.ok)
         throw new Error(
           (data as { error?: { message?: string } }).error?.message ||
             'Photo reading failed. Your photos are still here; please try again.',
         );
-      const parsed = TranscriptionSchema.parse(data);
+      const parsed = TranscriptionSchema.safeParse(data);
+      if (!parsed.success)
+        throw new Error(
+          'The extracted text could not be checked. Your photos are kept here; try again or type from the photos.',
+        );
       if (mounted.current) {
-        setResult(parsed);
-        setDraft(parsed.text);
+        setReviewSource('ai');
+        setResult(parsed.data);
+        setDraft(parsed.data.text);
         setChecked(false);
       }
     } catch (e) {
@@ -195,7 +228,9 @@ export default function SubmissionField({
   const useText = () => {
     if (!checked || locked) return;
     try {
-      onChange(combinePhotoText(value, draft, append));
+      const imported = combinePhotoText(value, draft, append);
+      setLastImport({ before: value, after: imported });
+      onChange(imported);
       setPhotos([]);
       invalidate();
       setMode('text');
@@ -211,6 +246,13 @@ export default function SubmissionField({
     invalidate();
     setMode('text');
   };
+  const typeFromPhotos = () => {
+    setReviewSource('manual');
+    setResult({ text: '', warnings: [] });
+    setDraft('');
+    setChecked(false);
+    setPhotoError('');
+  };
   const move = (index: number, direction: number) => {
     setPhotos((p) => {
       const next = [...p];
@@ -223,7 +265,11 @@ export default function SubmissionField({
     invalidate();
   };
   return (
-    <section className="submission-field" aria-labelledby={`${target}-heading`}>
+    <section
+      id={`submission-${target}`}
+      className="submission-field"
+      aria-labelledby={`${target}-heading`}
+    >
       <div className="submission-field-heading">
         <span className="field-step">{target === 'question' ? '1' : '2'}</span>
         <div>
@@ -239,6 +285,20 @@ export default function SubmissionField({
                 : 'Include your calculations and written reasoning.'}
           </p>
         </div>
+        <span
+          className={`field-readiness ${photos.length ? 'needs-review' : value.trim() ? 'is-ready' : ''}`}
+        >
+          {photos.length ? (
+            'Review photos'
+          ) : value.trim() ? (
+            <>
+              <Check size={14} />
+              Added
+            </>
+          ) : (
+            'Not added'
+          )}
+        </span>
       </div>
       <Tabs
         value={mode}
@@ -264,8 +324,8 @@ export default function SubmissionField({
           {photos.length > 0 && (
             <div className="photo-pending">
               <p>
-                Your photo draft is waiting in Photos. Review it there or
-                discard it to continue typing.
+                Your photo draft is kept in Photos. You can keep typing here,
+                then review or discard the photos before submitting.
               </p>
               <Button
                 type="button"
@@ -310,8 +370,34 @@ export default function SubmissionField({
         </TabsContent>
         {!readOnly && (
           <TabsContent value="photos">
-            <div className="photo-workspace">
-              <div className="photo-upload">
+            <div
+              className="photo-workspace"
+              onPaste={(e) => {
+                if (e.clipboardData.files.length && !locked) {
+                  e.preventDefault();
+                  void addPhotos(e.clipboardData.files);
+                }
+              }}
+            >
+              <div
+                className={`photo-upload ${dragging ? 'is-dragging' : ''}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (!locked) setDragging(true);
+                }}
+                onDragLeave={(e) => {
+                  if (
+                    !(e.relatedTarget instanceof Node) ||
+                    !e.currentTarget.contains(e.relatedTarget)
+                  )
+                    setDragging(false);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  void addPhotos(e.dataTransfer.files);
+                }}
+              >
                 <ScanText size={28} strokeWidth={1.4} />
                 <h4>
                   {photos.length
@@ -341,6 +427,9 @@ export default function SubmissionField({
                 </div>
                 <p className="photo-formats">
                   JPG, PNG, WebP · Up to 3 pages · 15 MB per photo
+                </p>
+                <p className="photo-formats">
+                  You can also drop images here or paste a screenshot.
                 </p>
                 <input
                   ref={fileRef}
@@ -453,20 +542,29 @@ export default function SubmissionField({
                   </p>
                   {!configured && (
                     <p className="photo-setup">
-                      Photo reading needs AI setup. You can choose photos now or
-                      use Type / paste.
+                      Automatic reading isn’t connected yet. You can type from
+                      your photos below, or use Type / paste.
                     </p>
                   )}
                   <Button
                     type="button"
                     className="primary-button"
-                    disabled={locked || !photos.length}
+                    disabled={locked || !photos.length || !configured}
                     onClick={() => {
                       void extract();
                     }}
                   >
                     <ScanText size={17} />
                     Read {photos.length > 1 ? 'photos' : 'photo'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={locked || !photos.length}
+                    onClick={typeFromPhotos}
+                  >
+                    <Keyboard size={17} />
+                    Type from these photos
                   </Button>
                   <p className="photo-next">
                     Next: check the text before using it.
@@ -490,14 +588,19 @@ export default function SubmissionField({
                 </output>
               )}
               {result && (
-                <div className="photo-review">
+                <div className="photo-review" id={`${target}-photo-review`}>
                   <div className="photo-review-heading">
                     <Check size={19} />
-                    <h4>Check what we read</h4>
+                    <h4>
+                      {reviewSource === 'manual'
+                        ? 'Type what you see'
+                        : 'Check what we read'}
+                    </h4>
                   </div>
                   <p>
-                    Compare with your photos. Fix any misread numbers, symbols,
-                    or words. Keep your original reasoning.
+                    {reviewSource === 'manual'
+                      ? 'Copy the work from your photos. Keep the original numbers and reasoning. No photos are sent while you type.'
+                      : 'Compare with your photos. Fix any misread numbers, symbols, or words. Keep your original reasoning.'}
                   </p>
                   {result.warnings.length > 0 && (
                     <div className="photo-warnings">
@@ -509,22 +612,75 @@ export default function SubmissionField({
                       </ul>
                     </div>
                   )}
-                  <label htmlFor={`${target}-photo-text`}>
-                    Text from your photos
-                  </label>
-                  <textarea
-                    ref={reviewRef}
-                    id={`${target}-photo-text`}
-                    value={draft}
-                    onChange={(e) => {
-                      setDraft(e.target.value);
-                      setChecked(false);
-                    }}
-                    rows={8}
-                    maxLength={20000}
-                    disabled={locked}
-                    placeholder="If the photo wasn’t readable, enter what you can read or try a clearer photo."
-                  />
+                  <div className="photo-review-grid">
+                    {activePhoto && (
+                      <figure className="review-original">
+                        <div className="review-page-nav">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={activePhotoIndex === 0}
+                            aria-label={`Previous ${target} review photo`}
+                            onClick={() =>
+                              setActivePhotoId(photos[activePhotoIndex - 1].id)
+                            }
+                          >
+                            <ChevronLeft size={17} />
+                          </Button>
+                          <figcaption>
+                            Original · {activePhotoIndex + 1} of {photos.length}
+                          </figcaption>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            disabled={activePhotoIndex === photos.length - 1}
+                            aria-label={`Next ${target} review photo`}
+                            onClick={() =>
+                              setActivePhotoId(photos[activePhotoIndex + 1].id)
+                            }
+                          >
+                            <ChevronRight size={17} />
+                          </Button>
+                        </div>
+                        <div className="review-original-image">
+                          <img
+                            src={activePhoto.dataUrl}
+                            alt={`Original ${target} page ${activePhotoIndex + 1} for comparison`}
+                          />
+                        </div>
+                        <p>Use the page thumbnail above to enlarge it.</p>
+                      </figure>
+                    )}
+                    <div className="review-text-editor">
+                      <label htmlFor={`${target}-photo-text`}>
+                        Text from your photos
+                      </label>
+                      <textarea
+                        ref={reviewRef}
+                        id={`${target}-photo-text`}
+                        value={draft}
+                        onChange={(e) => {
+                          setDraft(e.target.value);
+                          setChecked(false);
+                        }}
+                        rows={8}
+                        maxLength={20000}
+                        disabled={locked}
+                        placeholder="If the photo wasn’t readable, enter what you can read or try a clearer photo."
+                      />
+                      <p className="review-character-count">
+                        {draft.length.toLocaleString()} / 20,000 characters
+                      </p>
+                      {unclearCount > 0 && (
+                        <p className="review-unclear">
+                          {unclearCount} unclear{' '}
+                          {unclearCount === 1 ? 'section' : 'sections'}. Check
+                          the original or retake the photo. Leave [unclear] for
+                          anything you cannot read; don’t guess.
+                        </p>
+                      )}
+                    </div>
+                  </div>
                   {value.trim() && (
                     <div className="photo-checkbox">
                       <Checkbox
@@ -569,6 +725,7 @@ export default function SubmissionField({
                       onClick={() => {
                         void extract();
                       }}
+                      hidden={!configured}
                     >
                       Read again
                     </Button>
@@ -599,6 +756,21 @@ export default function SubmissionField({
         <output className="photo-success">
           <Check size={16} />
           {notice}
+          {lastImport && value === lastImport.after && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={locked}
+              onClick={() => {
+                onChange(lastImport.before);
+                setLastImport(null);
+                setNotice('Your previous text was restored.');
+              }}
+            >
+              <Undo2 size={15} />
+              Undo
+            </Button>
+          )}
         </output>
       )}
       {error && (

@@ -39,10 +39,21 @@ No physical printer output or final PDF pagination was captured. The app uses th
 - Type checking and lint passed after the photo integration. The production build was rerun for this update.
 - The actual local `/api/transcribe` route returned 503 `SETUP_REQUIRED` with actionable guidance when credentials were absent. It did not return fabricated extracted text.
 - Browser inspection confirmed separate Type / paste and Photos controls for question and answer, the upload/camera actions, file-format guidance, privacy notice, and the setup-required state. Switching to Photos preserved the typed question in component state.
-- The browser file-chooser automation did not complete reliably. Full browser upload → preview → OCR → edit → confirm interaction, real-device camera capture, orientation handling, and live handwriting/graph recognition remain unverified. A temporary local proxy for fixture-only UI testing was stopped and is excluded from source and deployment.
+- The browser file-chooser automation did not complete reliably. Real-device camera capture, orientation handling, and live handwriting/graph recognition remain unverified. A temporary local proxy for fixture-only UI testing was stopped and is excluded from source and deployment. The subsequent UX pass below verifies photo entry through the clipboard and manual review.
 - The backend photo flow and review helpers use deterministic mocks in tests. These do not establish OCR accuracy; check real handwritten samples once credentials are configured. HEIC/PDF require conversion to JPG/PNG/WebP. Uploaded images are transient; local report history contains only confirmed text.
 
-## Dependency checks (original audit)
+## Student-flow improvement pass
+
+- Retained the 57 passing offline checks; type checking, lint, and production build were rerun.
+- Visually inspected the compact workspace and original-photo/text comparison at the browser's available width.
+- Pasted an original generated PNG into the photo area. Confirmed it appeared as a removable page and could enter manual transcription with no provider request.
+- Confirmed **Use this question** stayed disabled until the review checkbox was checked.
+- Imported manual photo text, confirmed it appended to the existing question, and used **Undo** to restore the exact original typed question.
+- Used keyboard navigation to Saved reports and back, then to the sample report and back. Confirmed both typed fields were retained. Repeated the sample round trip with a pending photo and confirmed that the photo was retained.
+- Verified the Sample mode notice, setup-aware actions, field readiness labels, and three-step submission navigation in rendered page state.
+- File-picker automation and pointer targeting remain unreliable in this test environment; keyboard and image-paste interactions were used for the checks above. Drag/drop, exact mobile dimensions, real phone camera, and live OCR/AI feedback still need target-device/provider checks. No claim of live-model accuracy is made.
+
+## Dependency checks (original audit, unchanged)
 
 Security fixes were applied to React, React DOM, React Server Components, Vinext, Vite, and the Cloudflare toolchain. The final advisory scan reports **four high-severity dependency entries** (`sharp`, `miniflare`, `wrangler`, and `@cloudflare/vite-plugin`), all tracing to the toolchain's pinned `sharp@0.35.2` image library. The package manager's proposed automated fix is an incompatible downgrade of the Cloudflare tools, so it was not forced. These packages serve local development/packaging; StatReport processes photos with browser canvas and sends bounded image data directly to its AI provider; it does not use Sharp in its browser, upload route, or assessment code. The finding remains open for the upstream toolchain to update its pinned dependency.
 
