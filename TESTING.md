@@ -6,7 +6,7 @@ Checked in the supplied Windows workspace on 2026-09-10.
 
 | Check | Result |
 | --- | --- |
-| `npm test` | **49 passed, 0 failed.** Uses original fictional fixtures and provider mocks. |
+| `npm test` | **57 passed, 0 failed.** Uses original fictional fixtures and provider mocks. |
 | `npm run typecheck` | Passed. |
 | `npm run lint` | Passed for app, server, scripts, and tests. Generated starter UI primitives and hooks are excluded because their unchanged source has upstream lint errors. |
 | `npm run build` | Passed. Browser assets, KaTeX fonts, and Worker routes were generated. A non-blocking large client-chunk warning remains. |
@@ -33,9 +33,18 @@ The fixtures and mocked outcomes verify deterministic application behavior. They
 
 No physical printer output or final PDF pagination was captured. The app uses the browser's native print dialog, with before/after-print expansion and restoration of report details. Verify pagination in the target browser if a particular page format is required.
 
-## Dependency checks
+## Photo-input update
 
-Security fixes were applied to React, React DOM, React Server Components, Vinext, Vite, and the Cloudflare toolchain. The final advisory scan reports **four high-severity dependency entries** (`sharp`, `miniflare`, `wrangler`, and `@cloudflare/vite-plugin`), all tracing to the toolchain's pinned `sharp@0.35.2` image library. The package manager's proposed automated fix is an incompatible downgrade of the Cloudflare tools, so it was not forced. These packages serve local development/packaging; StatReport does not accept image uploads and does not use Sharp in its browser or assessment code. The finding remains open for the upstream toolchain to update its pinned dependency.
+- Added eight offline checks (57 total): supported formats and source size, data URL/signature validation, processed image size and page count, separation of question and answer, append/replace review behavior, unclear/invalid transcription results, image-aware Responses payloads with `store:false`, and an isolated bounded photo request body.
+- Type checking and lint passed after the photo integration. The production build was rerun for this update.
+- The actual local `/api/transcribe` route returned 503 `SETUP_REQUIRED` with actionable guidance when credentials were absent. It did not return fabricated extracted text.
+- Browser inspection confirmed separate Type / paste and Photos controls for question and answer, the upload/camera actions, file-format guidance, privacy notice, and the setup-required state. Switching to Photos preserved the typed question in component state.
+- The browser file-chooser automation did not complete reliably. Full browser upload → preview → OCR → edit → confirm interaction, real-device camera capture, orientation handling, and live handwriting/graph recognition remain unverified. A temporary local proxy for fixture-only UI testing was stopped and is excluded from source and deployment.
+- The backend photo flow and review helpers use deterministic mocks in tests. These do not establish OCR accuracy; check real handwritten samples once credentials are configured. HEIC/PDF require conversion to JPG/PNG/WebP. Uploaded images are transient; local report history contains only confirmed text.
+
+## Dependency checks (original audit)
+
+Security fixes were applied to React, React DOM, React Server Components, Vinext, Vite, and the Cloudflare toolchain. The final advisory scan reports **four high-severity dependency entries** (`sharp`, `miniflare`, `wrangler`, and `@cloudflare/vite-plugin`), all tracing to the toolchain's pinned `sharp@0.35.2` image library. The package manager's proposed automated fix is an incompatible downgrade of the Cloudflare tools, so it was not forced. These packages serve local development/packaging; StatReport processes photos with browser canvas and sends bounded image data directly to its AI provider; it does not use Sharp in its browser, upload route, or assessment code. The finding remains open for the upstream toolchain to update its pinned dependency.
 
 ## Remaining validation
 

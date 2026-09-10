@@ -1,6 +1,6 @@
 # StatReport
 
-A working AP Statistics answer evaluator: paste a question and your answer, optionally provide a teacher rubric, and receive structured practice feedback. Includes revisions under an immutable rubric, original/revised comparison, a fixed sample demonstration, local history, math rendering, copy export, and browser printing.
+A working AP Statistics answer evaluator: type, paste, or photograph a question and your answer, optionally provide a teacher rubric, and receive structured practice feedback. Photos become editable text for student review before evaluation. Includes revisions under an immutable rubric, original/revised comparison, a fixed sample demonstration, local history, math rendering, copy export, and browser printing.
 
 ## Start locally
 
@@ -25,7 +25,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 | --------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `OPENAI_API_KEY`            | For real analysis | Server-only OpenAI API credential.                                                                                               |
 | `STATREPORT_SIGNING_SECRET` | For real analysis | Random secret of at least 32 characters, used to authenticate the saved rubric and question. Keep it stable across deployments.  |
-| `OPENAI_MODEL`              | No                | Defaults to `gpt-5-mini`. Must support the Responses API and strict JSON Schema output. Model access depends on the API account. |
+| `OPENAI_MODEL`              | No                | Defaults to `gpt-5-mini`. Must support image input, the Responses API and strict JSON Schema output. Model access depends on the API account. |
 | `AI_PROVIDER`               | No                | `openai` (the included adapter). Other values produce an actionable setup error.                                                 |
 | `AI_TIMEOUT_MS`             | No                | Per-provider-request timeout; default 90,000 ms, clamped to 1,000–120,000 ms.                                                    |
 
@@ -33,7 +33,7 @@ Never prefix secrets with `VITE_` or `NEXT_PUBLIC_`. Never put keys in question 
 
 ## Student workflow
 
-1. Paste the complete question and your answer. Text tables, statistical symbols, calculations, and multipart answers are accepted.
+1. Add the complete question and your answer. Each field has **Type / paste** and **Photos**, so you can mix methods. Text tables, statistical symbols, calculations, and multipart answers are accepted.
 2. Expand **Additional information** for a rubric, reference answer, question source, year, and question type. The course defaults to 2026–27; older course years are supported.
 3. Choose **Analyze My Answer**. The privacy notice explains that the submitted materials will be sent to OpenAI. Validation or provider failures leave your writing in the editor.
 4. Read the summary, requirements, scored criteria, diagnostic reasoning review, strengths, misconceptions, and prioritized revision plan. Reveal the worked example only when you want it. Follow-up numeric exercises have locally checked answers and hidden hints/solutions.
@@ -43,6 +43,18 @@ Never prefix secrets with `VITE_` or `NEXT_PUBLIC_`. Never put keys in question 
 Demo revision: open **Explore a sample report**, choose **Revise My Answer**, then **Load sample revision** and **View sample comparison**. These actions display fixed sample data, not AI feedback. Editing that sample answer requires live analysis.
 
 ## Evaluation design
+
+### Photo input
+
+Choose **Photos** in either field, then **Choose photos** or **Take a photo**. The camera option requests the rear camera on supported phones; desktop browsers may show the file picker. Add up to three JPG, PNG, or WebP pages per field, 15 MB each before processing. Preview or reorder pages before **Read photo(s)**. The app reduces the longest edge to at most 2400 pixels and re-encodes locally as JPEG, removing EXIF metadata and enforcing a 1 MiB processed limit per image. HEIC, GIF, SVG, PDF, corrupt, or oversized files are rejected with recovery instructions.
+
+Read the extracted text next to enlarged photo previews, correct recognition mistakes, check **I checked this text against my photos**, then choose **Use this question/answer**. Existing typed content is appended by default; uncheck **Add to my existing text** to replace it. Pending photo drafts must be reviewed or discarded before analysis. Question and answer use separate transcription requests; an answer photo never goes into rubric preparation. A revised answer may also come from photos while the question stays fixed.
+
+`POST /api/transcribe` accepts `{ target: "question" | "answer", images: [dataUrl, ...] }`. It validates the image media types, signatures, byte limits, count and request origin, then uses a vision-capable Responses model with strict `{ text, warnings }` output. The configured `OPENAI_MODEL` must support **image input**, Responses API, and strict JSON Schema (the default `gpt-5-mini` supports this workflow). It uses the same server credentials and request safeguards as analysis. Images are never fetched from arbitrary client-provided URLs, written to a server archive, or put in saved reports. Only student-confirmed text is evaluated and optionally saved. The integration follows the official [Images and vision documentation](https://developers.openai.com/api/docs/guides/images-vision).
+
+Photo reading transcribes rather than solving or correcting the student work. Unreadable fragments are marked `[unclear]`. Visible graphs are represented by labeled descriptions and review warnings; review every axis, value and feature against the original. Recognition and graph descriptions are model judgments, not verified OCR. Retake cropped or blurry photos rather than assuming omitted content. The original images remain in the open editor only until imported, discarded, or the editor is closed/refreshed. The privacy notice is shown before a reading request; images are sent to OpenAI only when the student chooses **Read photo(s)**. Provider retention policies still apply.
+
+### Rubric and grading
 
 - `POST /api/prepare` accepts only the question and additional context. Its schema rejects a student answer. A separate provider request understands the question, establishes an expected response, and creates or adapts the rubric without seeing the submission. The result is validated and HMAC-signed before being returned and retained by the client.
 - `POST /api/evaluate` verifies the signed context and rubric, evaluates the answer, and sends the draft through a separate AI checking pass. Only a structurally and semantically validated report is published.
@@ -77,10 +89,10 @@ The project uses React, TypeScript, Vinext, and the Cloudflare Workers runtime w
 
 ## Known limitations
 
-- Real AI grading requires credentials. A working integration and validated mock pipeline are included, but live grading quality cannot be verified without an API key.
+- Photo reading and real AI grading require credentials. A working integration and validated mock pipeline are included, but live grading quality cannot be verified without an API key.
 - Teacher rubric matching, semantic reasoning, alternate-method recognition, and the independent example review are model judgments and can be wrong. Ask a teacher to review consequential interpretations. A separate AI pass is not a guarantee of full credit.
 - E/P/I support requires the actual definitions and complete question-specific overall rules. Rubrics with unsupported non-additive schemes should produce qualitative feedback or withheld scores rather than an invented conversion.
-- Only the listed numerical operations have deterministic verification. Graph interpretation cannot proceed reliably without a supplied graph description/data; this text-first version has no image upload or OCR.
+- Only the listed numerical operations have deterministic verification. Graph interpretation cannot proceed reliably without a supplied graph description/data; photo-derived graph descriptions may be incomplete and must be checked against the original.
 - Follow-up exercises are restricted to self-contained numerical questions the checker supports. A purely conceptual difficulty may receive a revision instruction instead of an unreliable auto-graded follow-up.
 - A provider request may take up to 90 seconds by default. Initial analysis has one preparation request and two grading/review requests. Retrying uses an already prepared rubric when possible. There is no automatic retry that could silently multiply API cost.
 - Unsaved drafts exist in memory only and are lost on a full page reload. Form validation, provider failures, and cancellation preserve them within the open page. Local storage can be unavailable or full; the UI reports that failure and retains the current report for copying/printing.

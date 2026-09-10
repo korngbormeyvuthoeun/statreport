@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -56,6 +56,7 @@ import {
   saveSession,
 } from '@/lib/history';
 import Report from './report';
+import SubmissionField from './submission-field';
 
 const empty: SubmissionContext = {
   question: '',
@@ -108,6 +109,20 @@ export default function Workspace() {
     [history, setHistory] = useState<Session[]>([]);
   const [saveHistory, setSaveHistory] = useState(false),
     [historyError, setHistoryError] = useState('');
+  const [photoState, setPhotoState] = useState({
+    question: { pending: false, working: false },
+    answer: { pending: false, working: false },
+  });
+  const onPhotoState = useCallback(
+    (target: 'question' | 'answer', pending: boolean, working: boolean) => {
+      setPhotoState((state) => ({ ...state, [target]: { pending, working } }));
+    },
+    [],
+  );
+  const locked =
+    busy || photoState.question.working || photoState.answer.working;
+  const pendingPhotos =
+    photoState.question.pending || photoState.answer.pending;
   const answerRef = useRef<HTMLTextAreaElement>(null),
     questionRef = useRef<HTMLTextAreaElement>(null),
     abortRef = useRef<AbortController | null>(null);
@@ -172,6 +187,13 @@ export default function Workspace() {
     e.preventDefault();
     setError('');
     setFieldErrors({});
+    if (locked) return;
+    if (pendingPhotos) {
+      setError(
+        'Finish reviewing your photo text and choose “Use this question” or “Use this answer”. You can also discard the photo draft to use your typed text.',
+      );
+      return;
+    }
     const c = ContextSchema.safeParse(context),
       a = AnswerSchema.safeParse(answer);
     if (!c.success || !a.success) {
@@ -312,7 +334,7 @@ export default function Workspace() {
           href="/"
           onClick={(e) => {
             e.preventDefault();
-            if (!busy) backToEditor();
+            if (!locked) backToEditor();
           }}
           aria-label="StatReport workspace"
         >
@@ -372,7 +394,11 @@ export default function Workspace() {
                   Until setup is complete, use the fixed sample report to
                   explore feedback and revision comparison.
                 </p>
-                <DialogClose render={<Button variant="outline" />} onClick={showDemo}>
+                <DialogClose
+                  render={<Button variant="outline" />}
+                  onClick={showDemo}
+                  disabled={locked}
+                >
                   Open fixed sample report
                   <ArrowRight size={16} />
                 </DialogClose>
@@ -398,7 +424,7 @@ export default function Workspace() {
                 ? 'A closer look at what works, what needs attention, and where to go next.'
                 : revising
                   ? 'Use your feedback to revise. The question and scoring criteria stay the same.'
-                  : 'Go beyond the final answer. Understand what works, what’s missing, and why.'}
+                  : 'Add your question and answer. Type, paste, or scan a photo—then get feedback on your reasoning.'}
             </p>
           </div>
           {isReport ? (
@@ -411,7 +437,7 @@ export default function Workspace() {
               variant="outline"
               className="sample-button"
               onClick={showDemo}
-              disabled={busy}
+              disabled={locked}
             >
               <FileText size={16} />
               Explore a sample report
@@ -422,11 +448,11 @@ export default function Workspace() {
         <Tabs
           value={mode}
           onValueChange={(v) => {
-            if (!busy) setMode(String(v));
+            if (!locked) setMode(String(v));
           }}
         >
           <TabsList variant="line" className="work-tabs">
-            <TabsTrigger value="new" disabled={busy}>
+            <TabsTrigger value="new" disabled={locked}>
               <Plus size={16} />
               {isReport
                 ? 'Current report'
@@ -434,7 +460,7 @@ export default function Workspace() {
                   ? 'Revise answer'
                   : 'New analysis'}
             </TabsTrigger>
-            <TabsTrigger value="history" disabled={busy}>
+            <TabsTrigger value="history" disabled={locked}>
               <History size={16} />
               Saved reports
               {history.length > 0 && (
@@ -471,7 +497,7 @@ export default function Workspace() {
                       </h2>
                     </div>
                     <span className="text-badge">
-                      {revising ? 'Same rubric' : 'Text input'}
+                      {revising ? 'Same rubric' : 'Type or scan'}
                     </span>
                   </div>
                   <form className="input-body" onSubmit={analyze} noValidate>
@@ -484,7 +510,7 @@ export default function Workspace() {
                             setRevising(false);
                             setError('');
                           }}
-                          disabled={busy}
+                          disabled={locked}
                         >
                           <ArrowLeft size={15} />
                           Back to report
@@ -509,83 +535,34 @@ export default function Workspace() {
                         )}
                       </div>
                     )}
-                    <label htmlFor="question">
-                      Paste your statistics question{' '}
-                      <span className="required">*</span>
-                    </label>
-                    <p id="question-hint" className="field-hint">
-                      Include the full question, numbers, and any subparts.
-                    </p>
-                    <textarea
-                      id="question"
-                      ref={questionRef}
-                      readOnly={revising}
-                      disabled={busy}
+                    <SubmissionField
+                      target="question"
                       value={context.question}
-                      onChange={(e) =>
-                        updateContext('question', e.target.value)
-                      }
-                      placeholder={
-                        'A random sample of 150 students at a large high school…\n\n(a) Construct a 95% confidence interval…\n(b) Interpret your interval in context.'
-                      }
-                      rows={6}
-                      maxLength={20000}
-                      aria-invalid={!!fieldErrors.question}
-                      aria-describedby={`question-hint${fieldErrors.question ? ' question-error' : ''}`}
+                      onChange={(value) => updateContext('question', value)}
+                      inputRef={questionRef}
+                      readOnly={revising}
+                      disabled={busy || photoState.answer.working}
+                      configured={!!config?.configured}
+                      error={fieldErrors.question}
+                      onPhotoState={onPhotoState}
                     />
-                    {fieldErrors.question && (
-                      <p className="field-error" id="question-error">
-                        {fieldErrors.question}
-                      </p>
-                    )}
-                    <div className="field-bottom">
-                      <span>
-                        Plain text tables and statistical notation are welcome.
-                      </span>
-                      <span>
-                        {context.question.length.toLocaleString()} / 20,000
-                      </span>
-                    </div>
-                    <label htmlFor="answer">
-                      Paste your answer <span className="required">*</span>
-                    </label>
-                    <p id="answer-hint" className="field-hint">
-                      Show your work. Your reasoning matters as much as the
-                      result.
-                    </p>
-                    <textarea
-                      id="answer"
-                      ref={answerRef}
-                      disabled={busy}
+                    <SubmissionField
+                      target="answer"
                       value={answer}
-                      onChange={(e) => setAnswer(e.target.value)}
-                      placeholder={
-                        'Here’s how I approached the problem…\n\nInclude your method, calculations, and explanation for each part.'
-                      }
-                      rows={6}
-                      maxLength={20000}
-                      aria-invalid={!!fieldErrors.answer}
-                      aria-describedby={`answer-hint${fieldErrors.answer ? ' answer-error' : ''}`}
+                      onChange={setAnswer}
+                      inputRef={answerRef}
+                      disabled={busy || photoState.question.working}
+                      configured={!!config?.configured}
+                      error={fieldErrors.answer}
+                      onPhotoState={onPhotoState}
                     />
-                    {fieldErrors.answer && (
-                      <p className="field-error" id="answer-error">
-                        {fieldErrors.answer}
-                      </p>
-                    )}
-                    <div className="field-bottom">
-                      <span>
-                        Calculations, explanations, and conclusions all belong
-                        here.
-                      </span>
-                      <span>{answer.length.toLocaleString()} / 20,000</span>
-                    </div>
                     <details className="additional">
                       <summary>
                         <Plus size={17} />
                         Additional information<span>Optional</span>
                         <ChevronDown size={16} />
                       </summary>
-                      <fieldset disabled={busy || revising}>
+                      <fieldset disabled={locked || revising}>
                         <label htmlFor="rubric">
                           Teacher rubric or scoring guidelines
                         </label>
@@ -632,7 +609,7 @@ export default function Workspace() {
                               onValueChange={(v) =>
                                 v && updateContext('courseYear', v)
                               }
-                              disabled={busy || revising}
+                              disabled={locked || revising}
                             >
                               <SelectTrigger
                                 id="course-year"
@@ -671,7 +648,7 @@ export default function Workspace() {
                                   v as SubmissionContext['questionType'],
                                 )
                               }
-                              disabled={busy || revising}
+                              disabled={locked || revising}
                             >
                               <SelectTrigger
                                 id="question-type"
@@ -704,9 +681,15 @@ export default function Workspace() {
                       <div className="setup-notice">
                         <Info size={17} />
                         <p>
-                          <strong>Live analysis needs setup.</strong>{' '}
+                          <strong>
+                            Photo reading and live analysis need setup.
+                          </strong>{' '}
                           {config.message}{' '}
-                          <button type="button" onClick={showDemo}>
+                          <button
+                            type="button"
+                            onClick={showDemo}
+                            disabled={locked}
+                          >
                             Explore the fixed sample
                             <ArrowRight size={13} />
                           </button>
@@ -718,7 +701,7 @@ export default function Workspace() {
                         id="save-history"
                         checked={saveHistory}
                         onCheckedChange={(v) => preference(!!v)}
-                        disabled={busy}
+                        disabled={locked}
                       />
                       <label htmlFor="save-history">
                         Save completed reports in this browser
@@ -741,6 +724,7 @@ export default function Workspace() {
                         <Button
                           type="button"
                           className="primary-button"
+                          disabled={locked || pendingPhotos}
                           onClick={() => {
                             setSession(createDemoSession(true));
                             setRevising(false);
@@ -756,7 +740,7 @@ export default function Workspace() {
                         <Button
                           type="submit"
                           className="primary-button"
-                          disabled={busy}
+                          disabled={locked}
                         >
                           {busy ? (
                             <LoaderCircle size={17} className="spin" />

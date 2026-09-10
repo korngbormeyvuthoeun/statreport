@@ -45,7 +45,7 @@ export function errorResponse(e: unknown) {
     500,
   );
 }
-export async function readBody(request: Request) {
+export async function readBody(request: Request, max = 250000) {
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin)
     throw new ServiceError(
@@ -60,7 +60,6 @@ export async function readBody(request: Request) {
       .startsWith('application/json')
   )
     throw new ServiceError('CONTENT_TYPE', 'Submit the form as JSON.', 415);
-  const max = 250000;
   if (Number(request.headers.get('content-length')) > max)
     throw new ServiceError(
       'INPUT_TOO_LARGE',

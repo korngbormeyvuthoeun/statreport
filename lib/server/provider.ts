@@ -18,6 +18,7 @@ export interface AIProvider {
     instructions: string,
     content: unknown,
     signal?: AbortSignal,
+    images?: readonly string[],
   ): Promise<T>;
 }
 export function mapProviderError(status: number): ServiceError {
@@ -62,6 +63,7 @@ export class OpenAIProvider implements AIProvider {
     instructions: string,
     content: unknown,
     signal?: AbortSignal,
+    images: readonly string[] = [],
   ): Promise<T> {
     if (!this.config.apiKey)
       throw new ServiceError(
@@ -95,6 +97,11 @@ export class OpenAIProvider implements AIProvider {
                 role: 'user',
                 content: [
                   { type: 'input_text', text: JSON.stringify(content) },
+                  ...images.map((image_url) => ({
+                    type: 'input_image',
+                    image_url,
+                    detail: 'high',
+                  })),
                 ],
               },
             ],
